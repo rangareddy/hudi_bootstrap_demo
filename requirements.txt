@@ -1,0 +1,3 @@
+trino
+presto-python-client
+pyyaml

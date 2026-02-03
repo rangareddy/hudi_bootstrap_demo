@@ -1,0 +1,20 @@
+common:
+  base_path: s3a://warehouse/
+  
+spark:
+  app_name: hudi-validation
+  master: local[*]
+
+trino:
+  host: trino
+  port: 8080
+  catalog: hudi
+  schema: bootstrap_db
+  user: hudi_test
+
+presto:
+  host: presto
+  port: 8080
+  catalog: hudi
+  schema: bootstrap_db
+  user: hudi_test
