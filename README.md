@@ -89,6 +89,37 @@ spark-submit validate_hudi_tables.py
 - **Data visible** = at least one row with `ts IS NOT NULL`.
 - Prints a markdown summary table: Engine × Table Type × Partitioned × Bootstrap Mode × Hoodie Metadata Visible × Hoodie Data Visible.
 
+## Bootstrap Validation Matrix
+
+The following matrix shows all tested combinations and their outcomes:
+
+| Engine | Table Type | Table Partitioned | Bootstrap Mode | Hoodie Metadata Visible | Hoodie Data Visible |
+| ------ | ---------- | ----------------- | -------------- | ----------------------- | ------------------- |
+| Spark  | COW        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Spark  | COW        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
+| Spark  | COW        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Spark  | COW        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
+| Spark  | MOR        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Spark  | MOR        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
+| Spark  | MOR        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Spark  | MOR        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
+| Trino  | COW        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Trino  | COW        | ❌ No              | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
+| Trino  | COW        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Trino  | COW        | ✅ Yes             | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
+| Trino  | MOR        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Trino  | MOR        | ❌ No              | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
+| Trino  | MOR        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Trino  | MOR        | ✅ Yes             | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
+| Presto | COW        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Presto | COW        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
+| Presto | COW        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Presto | COW        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
+| Presto | MOR        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Presto | MOR        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
+| Presto | MOR        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
+| Presto | MOR        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
+
 ## Files in this directory
 
 | File | Purpose |
@@ -106,3 +137,11 @@ spark-submit validate_hudi_tables.py
 - **S3 / path errors** – Set `WAREHOUSE_BASE` (and `SOURCE_BASE_PATH` for generation) to a path your Spark and cluster can read/write (e.g. `s3a://bucket/prefix/`).
 - **Hive sync failures** – Ensure Hive Metastore is reachable at `HIVE_METASTORE_URIS` and the database `HIVE_SYNC_DB` exists (or can be created).
 - **Trino / Presto validation fails** – Ensure Trino and Presto are running and `config.yaml` host/port/catalog/schema match your setup. Validation will still run for Spark and report connection errors for the other engines.
+
+## References
+
+1. [Hudi Bootstrap Procedures](https://hudi.apache.org/docs/procedures#bootstrap)
+2. [Hudi Migration Guide](https://hudi.apache.org/docs/migration_guide)
+
+
+
