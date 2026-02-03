@@ -15,7 +15,7 @@ This demo shows how to **bootstrap** existing Parquet data into Apache Hudi tabl
 
 - **Python 3** with `pip`
 - **Spark 3.x** (e.g. 3.5) with `spark-submit` on `PATH`
-- **Hudi JARs** at the paths used by `run_hudi_bootstrap.sh` (default: `/opt/hudi/`), or set `HUDI_UTILITIES_JAR` and `HUDI_SPARK_JAR`
+- **Hudi JARs** at the paths used by `bootstrap_hudi_tables.sh` (default: `/opt/hudi/`), or set `HUDI_UTILITIES_JAR` and `HUDI_SPARK_JAR`
 - **Object storage** (e.g. S3) and a **Hive Metastore** for the bootstrap step
 - **Trino** and **Presto** (optional) for the validation step; if unavailable, validation will report connection failures for those engines
 
@@ -23,8 +23,8 @@ This demo shows how to **bootstrap** existing Parquet data into Apache Hudi tabl
 
 - **`config.yaml`** – Spark app name/master, Trino and Presto connection (host, port, catalog, schema, user). Adjust for your environment.
 - **Warehouse path** – Source and Hudi data paths are derived from `WAREHOUSE_BASE`. Default: `s3a://warehouse/`. Override with:
-  - `generate_source_data.py`: set env `SOURCE_BASE_PATH` (or rely on default in script).
-  - `run_hudi_bootstrap.sh`: set env `WAREHOUSE_BASE` (e.g. `export WAREHOUSE_BASE=s3a://my-bucket/warehouse`).
+  - `generate_source_parquet.py`: set env `SOURCE_BASE_PATH` (or rely on default in script).
+  - `bootstrap_hudi_tables.sh`: set env `WAREHOUSE_BASE` (e.g. `export WAREHOUSE_BASE=s3a://my-bucket/warehouse`).
 
 ## Quick start (end-to-end)
 
@@ -35,21 +35,21 @@ From the `hudi_bootstrap_demo` directory:
 pip install -r requirements.txt
 
 # Run all steps: generate source data → bootstrap all 8 tables → validate
-bash run_e2e.sh
+bash run_demo_e2e.sh
 ```
 
 This will:
 
-1. Run `spark-submit generate_source_data.py` (writes Parquet under `SOURCE_BASE_PATH`).
-2. Run `./run_hudi_bootstrap.sh all` (creates Hudi tables and syncs to Hive).
-3. Run `spark-submit validate_hudi_bootstrap_data.py` (Spark + Trino + Presto validation and summary table).
+1. Run `spark-submit generate_source_parquet.py` (writes Parquet under `SOURCE_BASE_PATH`).
+2. Run `bash bootstrap_hudi_tables.sh all` (creates Hudi tables and syncs to Hive).
+3. Run `spark-submit validate_hudi_tables.py` (Spark + Trino + Presto validation and summary table).
 
 ## Running steps individually
 
 ### 1. Generate source Parquet data
 
 ```bash
-spark-submit generate_source_data.py
+spark-submit generate_source_parquet.py
 ```
 
 - Reads `config.yaml` for Spark settings.
@@ -59,14 +59,14 @@ spark-submit generate_source_data.py
 ### 2. Run Hudi bootstrap
 
 ```bash
-./run_hudi_bootstrap.sh [all|cow|mor]
+./bootstrap_hudi_tables.sh [all|cow|mor]
 ```
 
 - **`all`** (default) – Bootstrap all 8 tables (4 COW + 4 MOR).
 - **`cow`** – Only the 4 COPY_ON_WRITE tables.
 - **`mor`** – Only the 4 MERGE_ON_READ tables.
 
-Optional environment variables (see script header):
+Optional environment variables (see `bootstrap_hudi_tables.sh` header):
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
@@ -80,7 +80,7 @@ Optional environment variables (see script header):
 ### 3. Validate Hudi reads
 
 ```bash
-spark-submit validate_hudi_bootstrap_data.py
+spark-submit validate_hudi_tables.py
 ```
 
 - Reads `config.yaml` for Spark, Trino, and Presto.
@@ -94,15 +94,15 @@ spark-submit validate_hudi_bootstrap_data.py
 | File | Purpose |
 | ---- | ------- |
 | `config.yaml` | Spark, Trino, and Presto settings |
-| `generate_source_data.py` | Generate source Parquet and validate by count |
-| `run_hudi_bootstrap.sh` | Run Hudi bootstrap for COW/MOR (all or subset) |
-| `run_e2e.sh` | Run generate → bootstrap → validate in order |
-| `validate_hudi_bootstrap_data.py` | Validate reads and print summary table |
+| `generate_source_parquet.py` | Generate source Parquet data and validate by row count |
+| `bootstrap_hudi_tables.sh` | Run Hudi bootstrap for COW/MOR tables (all or subset) |
+| `run_demo_e2e.sh` | Run full demo: generate → bootstrap → validate |
+| `validate_hudi_tables.py` | Validate Hudi table reads (Spark, Trino, Presto) and print summary table |
 | `requirements.txt` | Python dependencies |
 
 ## Troubleshooting
 
-- **Spark / Hudi not found** – Ensure `spark-submit` is on `PATH` and Hudi JAR paths in `run_hudi_bootstrap.sh` (or `HUDI_UTILITIES_JAR` / `HUDI_SPARK_JAR`) are correct.
+- **Spark / Hudi not found** – Ensure `spark-submit` is on `PATH` and Hudi JAR paths in `bootstrap_hudi_tables.sh` (or `HUDI_UTILITIES_JAR` / `HUDI_SPARK_JAR`) are correct.
 - **S3 / path errors** – Set `WAREHOUSE_BASE` (and `SOURCE_BASE_PATH` for generation) to a path your Spark and cluster can read/write (e.g. `s3a://bucket/prefix/`).
 - **Hive sync failures** – Ensure Hive Metastore is reachable at `HIVE_METASTORE_URIS` and the database `HIVE_SYNC_DB` exists (or can be created).
 - **Trino / Presto validation fails** – Ensure Trino and Presto are running and `config.yaml` host/port/catalog/schema match your setup. Validation will still run for Spark and report connection errors for the other engines.

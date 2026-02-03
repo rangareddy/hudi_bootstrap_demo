@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # End-to-end Hudi bootstrap demo:
-#   1. Generate source Parquet data (generate_source_data.py)
-#   2. Run Hudi bootstrap for all tables (run_hudi_bootstrap.sh)
-#   3. Validate reads via Spark, Trino, and Presto (validate_hudi_bootstrap_data.py)
+#   1. Generate source Parquet data (generate_source_parquet.py)
+#   2. Run Hudi bootstrap for all tables (bootstrap_hudi_tables.sh)
+#   3. Validate reads via Spark, Trino, and Presto (validate_hudi_tables.py)
 #
 # Run from this directory so config.yaml and paths resolve correctly.
 #
@@ -22,7 +22,7 @@ echo "=============================================="
 # ---------------------------------------------------------------------------
 echo ""
 echo "########## Step 1: Generate source Parquet data ##########"
-spark-submit generate_source_data.py
+spark-submit generate_source_parquet.py
 echo "Step 1 done."
 
 # ---------------------------------------------------------------------------
@@ -30,7 +30,7 @@ echo "Step 1 done."
 # ---------------------------------------------------------------------------
 echo ""
 echo "########## Step 2: Run Hudi bootstrap ##########"
-bash run_hudi_bootstrap.sh all
+bash bootstrap_hudi_tables.sh all
 echo "Step 2 done."
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ echo "Step 2 done."
 # ---------------------------------------------------------------------------
 echo ""
 echo "########## Step 3: Validate Hudi reads ##########"
-spark-submit validate_hudi_bootstrap_data.py
+spark-submit validate_hudi_tables.py
 echo "Step 3 done."
 
 echo ""

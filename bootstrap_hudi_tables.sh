@@ -2,7 +2,7 @@
 #
 # Automate Hudi bootstrap for COW and MOR, non-partitioned and partitioned,
 # FULL_RECORD and METADATA_ONLY. Requires source Parquet data to exist at
-# SOURCE_BASE_PATH (see generate_source_data.py).
+# SOURCE_BASE_PATH (see generate_source_parquet.py).
 #
 
 set -e
@@ -16,8 +16,30 @@ SOURCE_DATA_BASE="${WAREHOUSE_BASE}/source_data"
 SOURCE_PARQUET="${SOURCE_DATA_BASE}/source_parquet"
 SOURCE_PARTITION_PARQUET="${SOURCE_DATA_BASE}/source_partition_parquet"
 
-HUDI_UTILITIES_JAR="${HUDI_UTILITIES_JAR:-/opt/hudi/hudi-utilities-slim-bundle_2.12-1.0.2.jar}"
-HUDI_SPARK_JAR="${HUDI_SPARK_JAR:-/opt/hudi/hudi-spark3.5-bundle_2.12-1.0.2.jar}"
+SPARK_VERSION="${SPARK_VERSION:-3.5}"
+HUDI_VERSION="${HUDI_VERSION:-1.0.2}"
+SCALA_VERSION="${SCALA_VERSION:-2.12}"
+HUDI_JARS_PATH="${HUDI_JARS_PATH:-/opt/hudi}"
+mkdir -p $HUDI_JARS_PATH
+
+HUDI_UTILITIES_JAR="${HUDI_UTILITIES_JAR:-${HUDI_JARS_PATH}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
+HUDI_SPARK_JAR="${HUDI_SPARK_JAR:-${HUDI_JARS_PATH}/hudi-spark${SPARK_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
+
+if [ ! -f "${HUDI_UTILITIES_JAR}" ]; then
+  echo "Downloading HUDI_UTILITIES_JAR: ${HUDI_UTILITIES_JAR}"
+  curl -L -o "${HUDI_UTILITIES_JAR}" "https://repo1.maven.org/maven2/org/apache/hudi/hudi-utilities-slim-bundle_${SCALA_VERSION}/${HUDI_VERSION}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar"
+fi
+
+if [ ! -f "${HUDI_SPARK_JAR}" ]; then
+  echo "Downloading HUDI_SPARK_JAR: ${HUDI_SPARK_JAR}"
+  curl -L -o "${HUDI_SPARK_JAR}" "https://repo1.maven.org/maven2/org/apache/hudi/hudi-spark${SPARK_VERSION}-bundle_${SCALA_VERSION}/${HUDI_VERSION}/hudi-spark${SPARK_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar"
+fi
+
+if ! command -v spark-submit &> /dev/null; then
+  echo "spark-submit could not be found"
+  exit 1
+fi
+
 HUDI_JARS="${HUDI_JARS:-${HUDI_UTILITIES_JAR},${HUDI_SPARK_JAR}}"
 
 HIVE_METASTORE_URIS="${HIVE_METASTORE_URIS:-thrift://hive-metastore:9083}"
@@ -91,11 +113,11 @@ run_bootstrap() {
 }
 
 # ---------------------------------------------------------------------------
-# 2.1 COPY_ON_WRITE (COW) Bootstrap
+# COPY_ON_WRITE (COW) Bootstrap
 # ---------------------------------------------------------------------------
 run_cow_bootstrap() {
   echo ""
-  echo "########## 2.1 COPY_ON_WRITE (COW) Bootstrap ##########"
+  echo "########## COPY_ON_WRITE (COW) Bootstrap ##########"
 
   # Non-Partitioned – FULL_RECORD
   run_bootstrap \
@@ -135,11 +157,11 @@ run_cow_bootstrap() {
 }
 
 # ---------------------------------------------------------------------------
-# 2.2 MERGE_ON_READ (MOR) Bootstrap
+# MERGE_ON_READ (MOR) Bootstrap
 # ---------------------------------------------------------------------------
 run_mor_bootstrap() {
   echo ""
-  echo "########## 2.2 MERGE_ON_READ (MOR) Bootstrap ##########"
+  echo "########## MERGE_ON_READ (MOR) Bootstrap ##########"
 
   # Non-Partitioned – FULL_RECORD
   run_bootstrap \
