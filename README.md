@@ -89,7 +89,7 @@ spark-submit validate_hudi_bootstrap_data.py
 - **Data visible** = at least one row with `ts IS NOT NULL`.
 - Prints a markdown summary table: Engine × Table Type × Partitioned × Bootstrap Mode × Hoodie Metadata Visible × Hoodie Data Visible.
 
-### ## ## Bootstrap Validation Matrix
+## Bootstrap Validation Matrix
 
 The following matrix shows all tested combinations and their outcomes:
 
