@@ -63,64 +63,42 @@ SOURCE_DATA = [
     ("2025-08-10 16:30:00", "uuid-010", "rider-J", "driver-Q", 20.00, "new_york"),
 ]
 
-
-def validate_by_count(df, expected_count: int, tag: str = "source") -> bool:
-    """
-    Validate DataFrame by row count only.
-    Returns True if df.count() == expected_count, False otherwise.
-    """
-    actual_count = df.count()
-    if actual_count != expected_count:
-        logger.error(
-            "[%s] Count validation failed: expected %d, got %d",
-            tag, expected_count, actual_count,
-        )
+def path_exists(spark, file_path):
+    """Check if a file path exists."""
+    try:
+        hadoop_conf = spark._jsc.hadoopConfiguration()
+        fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(hadoop_conf)
+        p = spark._jvm.org.apache.hadoop.fs.Path(file_path)
+        return fs.exists(p)
+    except Exception as e:
+        logger.error("Error checking if path %s exists: %s", file_path, e)
         return False
-    logger.info("[%s] Count validation passed: %d rows", tag, actual_count)
-    return True
-
 
 def generate_source_data(spark: SparkSession, base_path: str):
     """Build source DataFrame, validate it, and write non-partitioned and partitioned Parquet."""
     data_path = os.path.join(base_path, "source_data")
 
-    expected_count = len(SOURCE_DATA)
-    # Create DataFrame
-    df = spark.createDataFrame(SOURCE_DATA).toDF(*EXPECTED_COLUMNS)
-    logger.info("Created source DataFrame with %d rows", df.count())
-
-    # Validation by count
-    if not validate_by_count(df, expected_count, "source"):
-        logger.error("Data validation failed; aborting write.")
-        sys.exit(1)
-    df.show()
-
-    # Non-partitioned
     source_table = "source_parquet"
     source_table_path = os.path.join(data_path, source_table)
-    logger.info("Writing non-partitioned Parquet to %s", source_table_path)
-    df.repartition(1).write.mode("overwrite").save(source_table_path)
 
-    # Validate written non-partitioned data by count (read back)
-    read_back = spark.read.parquet(source_table_path)
-    if not validate_by_count(read_back, expected_count, "source_parquet (read-back)"):
-        logger.error("Read-back validation failed for %s", source_table_path)
-        sys.exit(1)
-    logger.info("Read-back validation passed for %s", source_table_path)
-
-    # Partitioned by city
     source_partition_table = "source_partition_parquet"
     source_partition_table_path = os.path.join(data_path, source_partition_table)
-    logger.info("Writing partitioned Parquet to %s (partitionBy city)", source_partition_table_path)
-    df.repartition(1).write.partitionBy("city").mode("overwrite").save(source_partition_table_path)
 
-    read_back_p = spark.read.parquet(source_partition_table_path)
-    if not validate_by_count(read_back_p, expected_count, "source_partition_parquet (read-back)"):
-        logger.error("Read-back validation failed for %s", source_partition_table_path)
-        sys.exit(1)
-    logger.info("Read-back validation passed for %s", source_partition_table_path)
+    is_source_table_path_exists = path_exists(spark, source_table_path)
+    is_source_partition_table_path_exists = path_exists(spark, source_partition_table_path)
 
-    logger.info("Source data generation completed successfully.")
+    if not is_source_table_path_exists or not is_source_partition_table_path_exists:
+        df = spark.createDataFrame(SOURCE_DATA).toDF(*EXPECTED_COLUMNS)
+        df.show()
+        if not is_source_table_path_exists:
+            logger.info("Source table path %s does not exist, creating it", source_table_path)
+            df.repartition(1).write.mode("overwrite").save(source_table_path)
+        if not is_source_partition_table_path_exists:
+            logger.info("Source partition table path %s does not exist, creating it", source_partition_table_path)
+            df.repartition(1).write.partitionBy("city").mode("overwrite").save(source_partition_table_path)
+        logger.info("Source data generation completed successfully.")
+    else:
+        logger.info("Source data already generated, skipping generation.")
 
 
 # -------------------------------------------------------------------

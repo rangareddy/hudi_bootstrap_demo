@@ -37,15 +37,25 @@ def yes_no(value):
     return "✅ Yes" if value else "❌ No"
 
 
+def _notes_for_display(notes):
+    """Shorten and escape notes for markdown table (no newlines, no pipe)."""
+    if not notes:
+        return "-"
+    one_line = str(notes).replace("\n", " ").replace("|", " ").strip()
+    return (one_line[:120] + "…") if len(one_line) > 120 else one_line
+
+
 def print_results_table(results):
     """Print validation results as a markdown table."""
     headers = [
         "Engine",
+        "Table",
         "Table Type",
         "Table Partitioned",
         "Bootstrap Mode",
         "Hoodie Metadata Visible",
         "Hoodie Data Visible",
+        "Notes",
     ]
     sep = "| " + " | ".join(["------"] * len(headers)) + " |"
     header_row = "| " + " | ".join(headers) + " |"
@@ -53,11 +63,13 @@ def print_results_table(results):
     for r in results:
         row = [
             r["engine"],
+            r["table"],
             r["table_type"],
             yes_no(r["partitioned"]),
             r["bootstrap_mode"],
             yes_no(r["metadata_visible"]),
             yes_no(r["data_visible"]),
+            _notes_for_display(r.get("notes")),
         ]
         lines.append("| " + " | ".join(row) + " |")
     table = "\n".join(lines)
@@ -69,6 +81,7 @@ def print_results_table(results):
 # Spark Validation
 # -------------------------------------------------------------------
 def validate_with_spark():
+    print(f"Spark connection config: {config['spark']}")
     spark = (
         SparkSession.builder
         .appName(config["spark"]["app_name"])
@@ -86,6 +99,7 @@ def validate_with_spark():
     for table, table_type, partitioned, mode in SCENARIOS:
         metadata_visible = False
         data_visible = False
+        notes = ""
         try:
             print(f"[Spark] Validating {table}")
             full_table = f"bootstrap_db.{table}"
@@ -118,15 +132,18 @@ def validate_with_spark():
             )
             agg_df.show(truncate=False)
         except Exception as e:
+            notes = str(e)
             print(f"  ❌ FAILED: {e}")
 
         results.append({
             "engine": "Spark",
+            "table": table,
             "table_type": table_type,
             "partitioned": partitioned,
             "bootstrap_mode": mode,
             "metadata_visible": metadata_visible,
             "data_visible": data_visible,
+            "notes": notes,
         })
 
     spark.stop()
@@ -138,6 +155,7 @@ def validate_with_spark():
 # -------------------------------------------------------------------
 def validate_with_trino():
     print("\n===== Trino Validation =====\n")
+    print(f"Trino connection config: {config['trino']}")
     results = []
 
     try:
@@ -150,21 +168,25 @@ def validate_with_trino():
         )
         cur = conn.cursor()
     except Exception as e:
+        conn_err = str(e)
         print(f"Trino connection failed: {e}")
         for table, table_type, partitioned, mode in SCENARIOS:
             results.append({
                 "engine": "Trino",
+                "table": table,
                 "table_type": table_type,
                 "partitioned": partitioned,
                 "bootstrap_mode": mode,
                 "metadata_visible": False,
                 "data_visible": False,
+                "notes": f"Connection failed: {conn_err}",
             })
         return results
 
     for table, table_type, partitioned, mode in SCENARIOS:
         metadata_visible = False
         data_visible = False
+        notes = ""
         try:
             print(f"[Trino] Validating {table}")
             # Metadata visible: _hoodie_commit_time is not null
@@ -192,15 +214,18 @@ def validate_with_trino():
             print(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
             print(f"  Aggregates          : {rows}")
         except Exception as e:
+            notes = str(e)
             print(f"  ❌ FAILED: {e}")
 
         results.append({
             "engine": "Trino",
+            "table": table,
             "table_type": table_type,
             "partitioned": partitioned,
             "bootstrap_mode": mode,
             "metadata_visible": metadata_visible,
             "data_visible": data_visible,
+            "notes": notes,
         })
 
     cur.close()
@@ -213,6 +238,7 @@ def validate_with_trino():
 # -------------------------------------------------------------------
 def validate_with_presto():
     print("\n===== Presto Validation =====\n")
+    print(f"Presto connection config: {config['presto']}")
     results = []
 
     try:
@@ -225,21 +251,25 @@ def validate_with_presto():
         )
         cur = conn.cursor()
     except Exception as e:
+        conn_err = str(e)
         print(f"Presto connection failed: {e}")
         for table, table_type, partitioned, mode in SCENARIOS:
             results.append({
                 "engine": "Presto",
+                "table": table,
                 "table_type": table_type,
                 "partitioned": partitioned,
                 "bootstrap_mode": mode,
                 "metadata_visible": False,
                 "data_visible": False,
+                "notes": f"Connection failed: {conn_err}",
             })
         return results
 
     for table, table_type, partitioned, mode in SCENARIOS:
         metadata_visible = False
         data_visible = False
+        notes = ""
         try:
             print(f"[Presto] Validating {table}")
             # Metadata visible: _hoodie_commit_time is not null
@@ -267,15 +297,18 @@ def validate_with_presto():
             print(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
             print(f"  Aggregates          : {rows}")
         except Exception as e:
+            notes = str(e)
             print(f"  ❌ FAILED: {e}")
 
         results.append({
             "engine": "Presto",
+            "table": table,
             "table_type": table_type,
             "partitioned": partitioned,
             "bootstrap_mode": mode,
             "metadata_visible": metadata_visible,
             "data_visible": data_visible,
+            "notes": notes,
         })
 
     cur.close()
@@ -328,10 +361,6 @@ Examples:
 if __name__ == "__main__":
     engines = parse_args()
     hudi_version = os.environ.get("HUDI_VERSION", "")
-    print(f"Validating with engine(s): {', '.join(engines)}")
-    if hudi_version:
-        print(f"HUDI_VERSION (from env): {hudi_version}")
-
     all_results = []
     if "spark" in engines:
         all_results.extend(validate_with_spark())
@@ -341,8 +370,9 @@ if __name__ == "__main__":
         all_results.extend(validate_with_presto())
 
     if all_results:
+        print(f"Validating with engine(s): {', '.join(engines)} and HUDI_VERSION: {hudi_version}")
         print("\n" + "=" * 80)
-        print("VALIDATION SUMMARY")
+        print(f"VALIDATION SUMMARY: (HUDI_VERSION: {hudi_version})")
         print("=" * 80)
         print_results_table(all_results)
     else:
