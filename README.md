@@ -22,6 +22,7 @@ This demo shows how to **bootstrap** existing Parquet data into Apache Hudi tabl
 ## Configuration
 
 - **`config.yaml`** – Spark app name/master, Trino and Presto connection (host, port, catalog, schema, user). Adjust for your environment.
+- **`HUDI_VERSION`** – Set in `run_demo_e2e.sh` (default: `1.0.2`). Used by `bootstrap_hudi_tables.sh` for JAR paths and by the Python scripts for logging. Override with `export HUDI_VERSION=x.y.z` before running.
 - **Warehouse path** – Source and Hudi data paths are derived from `WAREHOUSE_BASE`. Default: `s3a://warehouse/`. Override with:
   - `generate_source_parquet.py`: set env `SOURCE_BASE_PATH` (or rely on default in script).
   - `bootstrap_hudi_tables.sh`: set env `WAREHOUSE_BASE` (e.g. `export WAREHOUSE_BASE=s3a://my-bucket/warehouse`).
@@ -70,21 +71,33 @@ Optional environment variables (see `bootstrap_hudi_tables.sh` header):
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
+| `HUDI_VERSION` | `1.0.2` (set in `run_demo_e2e.sh`) | Hudi version used for JAR paths; override to use a different version |
 | `WAREHOUSE_BASE` | `s3a://warehouse` | Base path for source and Hudi data |
 | `HIVE_METASTORE_URIS` | `thrift://hive-metastore:9083` | Hive metastore for sync |
 | `HIVE_SYNC_DB` | `bootstrap_db` | Hive database for synced tables |
-| `HUDI_UTILITIES_JAR` | `/opt/hudi/hudi-utilities-slim-bundle_2.12-1.0.2.jar` | Hudi utilities JAR |
-| `HUDI_SPARK_JAR` | `/opt/hudi/hudi-spark3.5-bundle_2.12-1.0.2.jar` | Hudi Spark bundle JAR |
+| `HUDI_UTILITIES_JAR` | `…/hudi-utilities-slim-bundle_2.12-${HUDI_VERSION}.jar` | Hudi utilities JAR |
+| `HUDI_SPARK_JAR` | `…/hudi-spark3.5-bundle_2.12-${HUDI_VERSION}.jar` | Hudi Spark bundle JAR |
 | `SPARK_MASTER` | `local` | Spark master URL |
 
 ### 3. Validate Hudi reads
 
 ```bash
+# Validate with all engines (default: Spark, Trino, Presto)
 spark-submit validate_hudi_tables.py
+
+# Validate with a single engine
+spark-submit validate_hudi_tables.py --engines spark
+spark-submit validate_hudi_tables.py -e trino
+spark-submit validate_hudi_tables.py -e presto
+
+# Validate with a combination (comma-separated or repeated -e)
+spark-submit validate_hudi_tables.py --engines spark,trino
+spark-submit validate_hudi_tables.py -e spark -e presto
 ```
 
+- **`--engines` / `-e`** – One or more of `spark`, `trino`, `presto`. Default: all three.
 - Reads `config.yaml` for Spark, Trino, and Presto.
-- For each of the 8 tables, runs queries from Spark, Trino, and Presto.
+- For each of the 8 tables, runs queries from the selected engine(s).
 - **Metadata visible** = at least one row with `_hoodie_commit_time IS NOT NULL`.
 - **Data visible** = at least one row with `ts IS NOT NULL`.
 - Prints a markdown summary table: Engine × Table Type × Partitioned × Bootstrap Mode × Hoodie Metadata Visible × Hoodie Data Visible.

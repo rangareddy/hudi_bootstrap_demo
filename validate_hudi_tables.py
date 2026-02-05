@@ -1,8 +1,12 @@
-import yaml
+import argparse
+import os
 import sys
+import yaml
 from pyspark.sql import SparkSession
 import trino
 import prestodb
+
+VALID_ENGINES = {"spark", "trino", "presto"}
 
 
 # -------------------------------------------------------------------
@@ -280,15 +284,67 @@ def validate_with_presto():
 
 
 # -------------------------------------------------------------------
+# CLI: parse --engines
+# -------------------------------------------------------------------
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Validate Hudi bootstrap tables with Spark, Trino, and/or Presto.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  spark-submit validate_hudi_tables.py                    # all engines (default)
+  spark-submit validate_hudi_tables.py --engines spark
+  spark-submit validate_hudi_tables.py --engines trino,presto
+  spark-submit validate_hudi_tables.py -e spark -e presto
+""",
+    )
+    parser.add_argument(
+        "--engines", "-e",
+        action="append",
+        default=None,
+        metavar="ENGINE",
+        help="Engine(s) to use: spark, trino, presto. Can be repeated or comma-separated. Default: all.",
+    )
+    args = parser.parse_args()
+
+    if args.engines is None:
+        return sorted(VALID_ENGINES)  # default: all
+
+    # Flatten: -e spark,trino -e presto -> ['spark','trino','presto']
+    chosen = set()
+    for part in args.engines:
+        for name in (s.strip().lower() for s in part.split(",") if s.strip()):
+            if name not in VALID_ENGINES:
+                parser.error(f"Invalid engine: {name}. Choose from: {', '.join(sorted(VALID_ENGINES))}")
+            chosen.add(name)
+    if not chosen:
+        parser.error("At least one engine must be selected.")
+    return sorted(chosen)
+
+
+# -------------------------------------------------------------------
 # Main
 # -------------------------------------------------------------------
 if __name__ == "__main__":
-    all_results = []
-    all_results.extend(validate_with_spark())
-    all_results.extend(validate_with_trino())
-    all_results.extend(validate_with_presto())
+    engines = parse_args()
+    hudi_version = os.environ.get("HUDI_VERSION", "")
+    print(f"Validating with engine(s): {', '.join(engines)}")
+    if hudi_version:
+        print(f"HUDI_VERSION (from env): {hudi_version}")
 
-    print("\n" + "=" * 80)
-    print("VALIDATION SUMMARY (Markdown Table)")
-    print("=" * 80)
-    print_results_table(all_results)
+    all_results = []
+    if "spark" in engines:
+        all_results.extend(validate_with_spark())
+    if "trino" in engines:
+        all_results.extend(validate_with_trino())
+    if "presto" in engines:
+        all_results.extend(validate_with_presto())
+
+    if all_results:
+        print("\n" + "=" * 80)
+        print("VALIDATION SUMMARY")
+        print("=" * 80)
+        print_results_table(all_results)
+    else:
+        print("No validation results (no engines selected).")
+        sys.exit(1)

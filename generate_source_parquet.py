@@ -127,6 +127,9 @@ def generate_source_data(spark: SparkSession, base_path: str):
 # Main
 # -------------------------------------------------------------------
 if __name__ == "__main__":
+    hudi_version = os.environ.get("HUDI_VERSION", "")
+    if hudi_version:
+        logger.info("HUDI_VERSION (from env): %s", hudi_version)
     config = load_config()
     spark = create_spark_session(config)
     try:
