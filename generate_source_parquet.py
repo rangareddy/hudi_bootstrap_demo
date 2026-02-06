@@ -6,7 +6,7 @@ Creates non-partitioned and city-partitioned datasets under the configured base 
 import logging
 import os
 import sys
-import yaml
+from yaml_util import load_config
 from pyspark.sql import SparkSession
 
 # -------------------------------------------------------------------
@@ -20,14 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
-# -------------------------------------------------------------------
-# Load Config
-# -------------------------------------------------------------------
-def load_config(config_path: str = "config.yaml"):
-    with open(config_path) as f:
-        return yaml.safe_load(f)
-
+current_file_path = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(current_file_path, "config.yaml")
 
 # -------------------------------------------------------------------
 # SparkSession
@@ -71,7 +65,6 @@ def path_exists(spark, file_path):
         p = spark._jvm.org.apache.hadoop.fs.Path(file_path)
         return fs.exists(p)
     except Exception as e:
-        logger.error("Error checking if path %s exists: %s", file_path, e)
         return False
 
 def generate_source_data(spark: SparkSession, base_path: str):
@@ -101,18 +94,15 @@ def generate_source_data(spark: SparkSession, base_path: str):
         logger.info("Source data already generated, skipping generation.")
 
 
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
-if __name__ == "__main__":
-    hudi_version = os.environ.get("HUDI_VERSION", "")
-    if hudi_version:
-        logger.info("HUDI_VERSION (from env): %s", hudi_version)
-    config = load_config()
+def main():
+    config = load_config(config_path)
     spark = create_spark_session(config)
-    try:
-        base_path = config.get("common", {}).get("base_path", "s3a://warehouse/")
-        generate_source_data(spark, base_path)
-    finally:
-        spark.stop()
-        logger.info("SparkSession stopped.")
+    base_path = config.get("common", {}).get("base_path", "s3a://warehouse/")
+    logger.info("Generating source data using base path: %s", base_path)
+    generate_source_data(spark, base_path)
+    spark.stop()
+    logger.info("SparkSession stopped.")
+
+
+if __name__ == "__main__":
+    main()

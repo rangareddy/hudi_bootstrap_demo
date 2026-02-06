@@ -1,36 +1,39 @@
+import logging
 import argparse
 import os
 import sys
-import yaml
-from pyspark.sql import SparkSession
 import trino
 import prestodb
+from yaml_util import load_config
+from pyspark.sql import SparkSession
 
 VALID_ENGINES = {"spark", "trino", "presto"}
 
+# -------------------------------------------------------------------
+# Logging
+# -------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+)
+logger = logging.getLogger(__name__)
 
-# -------------------------------------------------------------------
-# Load Config
-# -------------------------------------------------------------------
-with open("config.yaml") as f:
-    config = yaml.safe_load(f)
+current_file_path = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(current_file_path, "config.yaml")
 
+# Load config
+config = load_config(config_path)
 
-# -------------------------------------------------------------------
-# Scenario Matrix: (table_name, table_type, partitioned, bootstrap_mode)
-# -------------------------------------------------------------------
-SCENARIOS = [
-    # COW
-    ("trips_hudi_cow_bootstrap_fl", "COW", False, "FULL_RECORD"),
-    ("trips_hudi_cow_bootstrap_mo", "COW", False, "METADATA_ONLY"),
-    ("trips_hudi_cow_bootstrap_partitioned_fl", "COW", True, "FULL_RECORD"),
-    ("trips_hudi_cow_bootstrap_partitioned_mo", "COW", True, "METADATA_ONLY"),
-    # MOR
-    ("trips_hudi_mor_bootstrap_fl", "MOR", False, "FULL_RECORD"),
-    ("trips_hudi_mor_bootstrap_mo", "MOR", False, "METADATA_ONLY"),
-    ("trips_hudi_mor_bootstrap_partitioned_fl", "MOR", True, "FULL_RECORD"),
-    ("trips_hudi_mor_bootstrap_partitioned_mo", "MOR", True, "METADATA_ONLY"),
-]
+SCENARIOS = []
+
+base_table_name = config['common']['base_table_name']
+for table_type in ["COW", "MOR"]:
+    for partitioned in [False, True]:
+        for bootstrap_mode in ["FULL_RECORD", "METADATA_ONLY"]:
+            table_name = f"{base_table_name}_{table_type}_bootstrap_{'partitioned' if partitioned else 'non_partitioned'}_{bootstrap_mode}"
+            SCENARIOS.append((table_name, table_type, partitioned, bootstrap_mode))
 
 
 def yes_no(value):
@@ -81,11 +84,12 @@ def print_results_table(results):
 # Spark Validation
 # -------------------------------------------------------------------
 def validate_with_spark():
-    print(f"Spark connection config: {config['spark']}")
+    spark_config = config["spark"]
+    print(f"Spark connection config: {spark_config}")
     spark = (
         SparkSession.builder
-        .appName(config["spark"]["app_name"])
-        .master(config["spark"]["master"])
+        .appName(spark_config["app_name"])
+        .master(spark_config["master"])
         .config("spark.sql.extensions",
                 "org.apache.spark.sql.hudi.HoodieSparkSessionExtension")
         .config("spark.sql.catalog.spark_catalog",
@@ -95,15 +99,15 @@ def validate_with_spark():
 
     results = []
     print("\n===== Spark Validation =====\n")
-
+    database = spark_config["db_name"]
     for table, table_type, partitioned, mode in SCENARIOS:
         metadata_visible = False
         data_visible = False
         notes = ""
         try:
-            print(f"[Spark] Validating {table}")
-            full_table = f"bootstrap_db.{table}"
 
+            full_table = f"{database}.{table}"
+            print(f"[Spark] Validating {full_table}")
             # Metadata visible: _hoodie_commit_time is not null
             try:
                 meta_df = spark.sql(
@@ -155,25 +159,28 @@ def validate_with_spark():
 # -------------------------------------------------------------------
 def validate_with_trino():
     print("\n===== Trino Validation =====\n")
-    print(f"Trino connection config: {config['trino']}")
+    trino_config = config["trino"]
+    print(f"Trino connection config: {trino_config}")
     results = []
-
+    db_name = trino_config["schema"]
+    catalog = trino_config["catalog"]
     try:
         conn = trino.dbapi.connect(
-            host=config["trino"]["host"],
-            port=config["trino"]["port"],
-            user=config["trino"]["user"],
-            catalog=config["trino"]["catalog"],
-            schema=config["trino"]["schema"],
+            host=trino_config["host"],
+            port=trino_config["port"],
+            user=trino_config["user"],
+            catalog=catalog,
+            schema=db_name,
         )
         cur = conn.cursor()
     except Exception as e:
         conn_err = str(e)
         print(f"Trino connection failed: {e}")
         for table, table_type, partitioned, mode in SCENARIOS:
+            full_table = f"{db_name}.{table}"
             results.append({
                 "engine": "Trino",
-                "table": table,
+                "table": full_table,
                 "table_type": table_type,
                 "partitioned": partitioned,
                 "bootstrap_mode": mode,
@@ -188,25 +195,26 @@ def validate_with_trino():
         data_visible = False
         notes = ""
         try:
-            print(f"[Trino] Validating {table}")
+            full_table = f"{db_name}.{table}"
+            print(f"[Trino] Validating {full_table}")
             # Metadata visible: _hoodie_commit_time is not null
             try:
                 cur.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE _hoodie_commit_time IS NOT NULL"
+                    f"SELECT COUNT(*) FROM {full_table} WHERE _hoodie_commit_time IS NOT NULL"
                 )
                 metadata_visible = (cur.fetchone()[0] or 0) > 0
             except Exception:
                 metadata_visible = False
             # Data visible: ts column is not null
             try:
-                cur.execute(f"SELECT COUNT(*) FROM {table} WHERE ts IS NOT NULL")
+                cur.execute(f"SELECT COUNT(*) FROM {full_table} WHERE ts IS NOT NULL")
                 data_visible = (cur.fetchone()[0] or 0) > 0
             except Exception:
                 data_visible = False
-            cur.execute(f"SELECT COUNT(*) FROM {table}")
+            cur.execute(f"SELECT COUNT(*) FROM {full_table}")
             count = cur.fetchone()[0]
             cur.execute(
-                f"SELECT city, SUM(fare) FROM {table} GROUP BY city"
+                f"SELECT city, SUM(fare) FROM {full_table} GROUP BY city"
             )
             rows = cur.fetchall()
             print(f"  Rows                : {count}")
@@ -219,7 +227,7 @@ def validate_with_trino():
 
         results.append({
             "engine": "Trino",
-            "table": table,
+            "table": full_table,
             "table_type": table_type,
             "partitioned": partitioned,
             "bootstrap_mode": mode,
@@ -238,25 +246,28 @@ def validate_with_trino():
 # -------------------------------------------------------------------
 def validate_with_presto():
     print("\n===== Presto Validation =====\n")
-    print(f"Presto connection config: {config['presto']}")
+    presto_config = config["presto"]
+    print(f"Presto connection config: {presto_config}")
     results = []
-
+    db_name = presto_config["schema"]
+    catalog = presto_config["catalog"]
     try:
         conn = prestodb.dbapi.connect(
-            host=config["presto"]["host"],
-            port=config["presto"]["port"],
-            user=config["presto"]["user"],
-            catalog=config["presto"]["catalog"],
-            schema=config["presto"]["schema"],
+            host=presto_config["host"],
+            port=presto_config["port"],
+            user=presto_config["user"],
+            catalog=catalog,
+            schema=db_name,
         )
         cur = conn.cursor()
     except Exception as e:
         conn_err = str(e)
         print(f"Presto connection failed: {e}")
         for table, table_type, partitioned, mode in SCENARIOS:
+            full_table = f"{db_name}.{table}"
             results.append({
                 "engine": "Presto",
-                "table": table,
+                "table": full_table,
                 "table_type": table_type,
                 "partitioned": partitioned,
                 "bootstrap_mode": mode,
@@ -271,25 +282,26 @@ def validate_with_presto():
         data_visible = False
         notes = ""
         try:
-            print(f"[Presto] Validating {table}")
+            full_table = f"{db_name}.{table}"
+            print(f"[Presto] Validating {full_table}")
             # Metadata visible: _hoodie_commit_time is not null
             try:
                 cur.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE _hoodie_commit_time IS NOT NULL"
+                    f"SELECT COUNT(*) FROM {full_table} WHERE _hoodie_commit_time IS NOT NULL"
                 )
                 metadata_visible = (cur.fetchone()[0] or 0) > 0
             except Exception:
                 metadata_visible = False
             # Data visible: ts column is not null
             try:
-                cur.execute(f"SELECT COUNT(*) FROM {table} WHERE ts IS NOT NULL")
+                cur.execute(f"SELECT COUNT(*) FROM {full_table} WHERE ts IS NOT NULL")
                 data_visible = (cur.fetchone()[0] or 0) > 0
             except Exception:
                 data_visible = False
-            cur.execute(f"SELECT COUNT(*) FROM {table}")
+            cur.execute(f"SELECT COUNT(*) FROM {full_table}")
             count = cur.fetchone()[0]
             cur.execute(
-                f"SELECT city, SUM(fare) FROM {table} GROUP BY city"
+                f"SELECT city, SUM(fare) FROM {full_table} GROUP BY city"
             )
             rows = cur.fetchall()
             print(f"  Rows                : {count}")
@@ -302,7 +314,7 @@ def validate_with_presto():
 
         results.append({
             "engine": "Presto",
-            "table": table,
+            "table": full_table,
             "table_type": table_type,
             "partitioned": partitioned,
             "bootstrap_mode": mode,
@@ -316,50 +328,11 @@ def validate_with_presto():
     return results
 
 
-# -------------------------------------------------------------------
-# CLI: parse --engines
-# -------------------------------------------------------------------
-def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Validate Hudi bootstrap tables with Spark, Trino, and/or Presto.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  spark-submit validate_hudi_tables.py                    # all engines (default)
-  spark-submit validate_hudi_tables.py --engines spark
-  spark-submit validate_hudi_tables.py --engines trino,presto
-  spark-submit validate_hudi_tables.py -e spark -e presto
-""",
-    )
-    parser.add_argument(
-        "--engines", "-e",
-        action="append",
-        default=None,
-        metavar="ENGINE",
-        help="Engine(s) to use: spark, trino, presto. Can be repeated or comma-separated. Default: all.",
-    )
-    args = parser.parse_args()
-
-    if args.engines is None:
-        return sorted(VALID_ENGINES)  # default: all
-
-    # Flatten: -e spark,trino -e presto -> ['spark','trino','presto']
-    chosen = set()
-    for part in args.engines:
-        for name in (s.strip().lower() for s in part.split(",") if s.strip()):
-            if name not in VALID_ENGINES:
-                parser.error(f"Invalid engine: {name}. Choose from: {', '.join(sorted(VALID_ENGINES))}")
-            chosen.add(name)
-    if not chosen:
-        parser.error("At least one engine must be selected.")
-    return sorted(chosen)
-
-
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
 if __name__ == "__main__":
-    engines = parse_args()
+    engines = [engine for engine in VALID_ENGINES if config[engine]["enabled"] == True]
+    if not engines:
+        print("No engines selected. Please enable at least one engine in config.yaml.")
+        sys.exit(1)
     hudi_version = os.environ.get("HUDI_VERSION", "")
     all_results = []
     if "spark" in engines:
@@ -369,12 +342,8 @@ if __name__ == "__main__":
     if "presto" in engines:
         all_results.extend(validate_with_presto())
 
-    if all_results:
-        print(f"Validating with engine(s): {', '.join(engines)} and HUDI_VERSION: {hudi_version}")
-        print("\n" + "=" * 80)
-        print(f"VALIDATION SUMMARY: (HUDI_VERSION: {hudi_version})")
-        print("=" * 80)
-        print_results_table(all_results)
-    else:
-        print("No validation results (no engines selected).")
-        sys.exit(1)
+    print(f"Validating with engine(s): {', '.join(engines)} and HUDI_VERSION: {hudi_version}")
+    print("\n" + "=" * 80)
+    print(f"VALIDATION SUMMARY: (HUDI_VERSION: {hudi_version})")
+    print("=" * 80)
+    print_results_table(all_results)

@@ -1,20 +1,32 @@
 common:
-  base_path: s3a://warehouse/
-  
+  base_path: &base_path "s3a://warehouse/"
+  schema: &db_name "bootstrap_db"
+  catalog: &catalog_name "hudi"
+  base_table_name: &base_table_name "trips_hudi"
+  hive_metastore_uris: "thrift://hive-metastore:9083"
+  hudi_version: 1.0.2
+  hudi_jars_path: /opt/hudi
+
 spark:
-  app_name: hudi-validation
+  enabled: true
+  app_name: hudi-bootstrap
   master: local[*]
+  db_name: *db_name
+  warehouse_path: *base_path
+  base_table_name: *base_table_name
 
 trino:
+  enabled: true
   host: trino
   port: 8080
-  catalog: hudi
-  schema: bootstrap_db
   user: hudi_test
+  catalog: *catalog_name
+  schema: *db_name
 
 presto:
+  enabled: true
   host: presto
   port: 8080
-  catalog: hudi
-  schema: bootstrap_db
   user: hudi_test
+  catalog: *catalog_name
+  schema: *db_name

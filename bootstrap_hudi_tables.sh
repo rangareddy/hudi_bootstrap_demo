@@ -6,74 +6,61 @@
 #
 
 set -e
+set -o pipefail
 
 # ---------------------------------------------------------------------------
 # Config (override via env). SPARK_VERSION, HUDI_VERSION, SCALA_VERSION are
 # set by run_demo_e2e.sh when running the full demo; defaults below for standalone runs.
 # ---------------------------------------------------------------------------
-WAREHOUSE_BASE="${WAREHOUSE_BASE:-s3a://warehouse}"
-HUDI_DATA_BASE="${WAREHOUSE_BASE}/hudi_data"
-SOURCE_DATA_BASE="${WAREHOUSE_BASE}/source_data"
-SOURCE_PARQUET="${SOURCE_DATA_BASE}/source_parquet"
-SOURCE_PARTITION_PARQUET="${SOURCE_DATA_BASE}/source_partition_parquet"
 
 if ! command -v spark-submit &> /dev/null; then
     echo "spark-submit could not be found. Please install Spark and add it to your PATH."
     exit 1
 fi
 
-export SPARK_VERSION=$(spark-submit --version 2>&1 | awk '/version/ {print $NF; exit}')
-export SPARK_MAJOR_VERSION=$(echo "${SPARK_VERSION}" | cut -d. -f1,2)
-export HUDI_VERSION="${HUDI_VERSION:-1.0.2}"
-export SCALA_VERSION="${SCALA_VERSION:-2.12}"
-export TARGET_HUDI_VERSION="0.15.0"
+export SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export CONFIG_FILE="${SCRIPT_DIR}/config.yaml"
 
-HUDI_JARS_PATH="${HUDI_JARS_PATH:-/opt/hudi}"
-mkdir -p $HUDI_JARS_PATH
+VARS_EVAL=$(python3 -c "
+import yaml
+try:
+    with open('$CONFIG_FILE', 'r') as f:
+        cfg = yaml.safe_load(f)
+        common = cfg.get('common', {})
+        spark = cfg.get('spark', {})
+        
+        print(f\"HIVE_METASTORE_URIS='{common.get('hive_metastore_uris', '')}'\")
+        print(f\"HIVE_SYNC_DB='{common.get('schema', '')}'\")
+        print(f\"SPARK_MASTER='{spark.get('master', '')}'\")
+        print(f\"WAREHOUSE_BASE_PATH='{common.get('base_path', 's3a://warehouse')}'\")
+        print(f\"BASE_TABLE_NAME='{common.get('base_table_name', 'trips_hudi')}'\")
+        print(f\"HUDI_VERSION='{common.get('hudi_version', '1.0.2')}'\")
+        print(f\"HUDI_JARS_PATH='{common.get('hudi_jars_path', '/opt/hudi')}'\")  
+except Exception as e:
+    pass
+")
 
-HUDI_UTILITIES_JAR="${HUDI_UTILITIES_JAR:-${HUDI_JARS_PATH}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
-HUDI_SPARK_JAR="${HUDI_SPARK_JAR:-${HUDI_JARS_PATH}/hudi-spark${SPARK_MAJOR_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
+eval "$VARS_EVAL"
 
-MVN_HUDI_URL=https://repo1.maven.org/maven2/org/apache/hudi
+export WAREHOUSE_BASE_PATH="${WAREHOUSE_BASE_PATH:-'s3a://warehouse'}"
+export HUDI_DATA_BASE_PATH="${WAREHOUSE_BASE_PATH}/hudi_data"
+export SOURCE_DATA_BASE_PATH="${WAREHOUSE_BASE_PATH}/source_data"
+export SOURCE_PARQUET_PATH="${SOURCE_DATA_BASE_PATH}/source_parquet"
+export SOURCE_PARTITION_PARQUET_PATH="${SOURCE_DATA_BASE_PATH}/source_partition_parquet"
+export HIVE_METASTORE_URIS="${HIVE_METASTORE_URIS:-'thrift://hive-metastore:9083'}"
+export HIVE_SYNC_DB="${HIVE_SYNC_DB:-'bootstrap_db'}"
+export SPARK_MASTER="${SPARK_MASTER:-'local[2]'}"
 
-if [ ! -f "${HUDI_UTILITIES_JAR}" ]; then
-  echo "Downloading HUDI_UTILITIES_JAR: ${HUDI_UTILITIES_JAR}"
-  curl -L -o "${HUDI_UTILITIES_JAR}" \
-    "$MVN_HUDI_URL/hudi-utilities-slim-bundle_${SCALA_VERSION}/${HUDI_VERSION}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar"
-fi
+export SPARK_VERSION=${SPARK_VERSION:-$(spark-submit --version 2>&1 | awk '/version/ {print $NF; exit}')}
+export SPARK_MAJOR_VERSION=${SPARK_MAJOR_VERSION:-$(echo "${SPARK_VERSION}" | cut -d. -f1,2)}
+export SCALA_VERSION=${SCALA_VERSION:-$(spark-submit --version 2>&1 | grep 'Scala version' | awk '{print $4}' | cut -d. -f1,2)}
 
-if [ ! -f "${HUDI_SPARK_JAR}" ]; then
-  echo "Downloading HUDI_SPARK_JAR: ${HUDI_SPARK_JAR}"
-  curl -L -o "${HUDI_SPARK_JAR}" \
-    "$MVN_HUDI_URL/hudi-spark${SPARK_MAJOR_VERSION}-bundle_${SCALA_VERSION}/${HUDI_VERSION}/hudi-spark${SPARK_MAJOR_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar"
-fi
-
-export HUDI_JARS="${HUDI_JARS:-${HUDI_UTILITIES_JAR},${HUDI_SPARK_JAR}}"
-export HIVE_METASTORE_URIS="${HIVE_METASTORE_URIS:-thrift://hive-metastore:9083}"
-export HIVE_SYNC_DB="${HIVE_SYNC_DB:-bootstrap_db}"
-export SPARK_MASTER="${SPARK_MASTER:-local}"
+export HUDI_VERSION=${HUDI_VERSION:-1.0.2}  
+export HUDI_JARS_PATH="${HUDI_JARS_PATH:-/opt/hudi}"
+export HUDI_UTILITIES_JAR="${HUDI_UTILITIES_JAR:-${HUDI_JARS_PATH}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
+export HUDI_SPARK_JAR="${HUDI_SPARK_JAR:-${HUDI_JARS_PATH}/hudi-spark${SPARK_MAJOR_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
+export HUDI_JARS="${HUDI_UTILITIES_JAR},${HUDI_SPARK_JAR}"
 export STREAMER_CLASS="org.apache.hudi.utilities.streamer.HoodieStreamer"
-
-version_lt() {
-    local ver1=$1
-    local ver2=$2
-    local IFS='.'
-    local a=($ver1)
-    local b=($ver2)
-    
-    # Pad the shorter array
-    while [[ ${#a[@]} -lt ${#b[@]} ]]; do a+=(0); done
-    while [[ ${#b[@]} -lt ${#a[@]} ]]; do b+=(0); done
-    
-    for i in "${!a[@]}"; do
-        if [[ ${a[i]} -lt ${b[i]} ]]; then
-            return 0  # ver1 < ver2
-        elif [[ ${a[i]} -gt ${b[i]} ]]; then
-            return 1  # ver1 > ver2
-        fi
-    done
-    return 1  # equal
-}
 
 # ---------------------------------------------------------------------------
 # Common spark-submit base args
@@ -88,7 +75,7 @@ spark_submit_base() {
 }
 
 # ---------------------------------------------------------------------------
-# Run one bootstrap job
+# Run bootstrap job
 # ---------------------------------------------------------------------------
 run_bootstrap() {
   local target_base_path="$1"
@@ -123,12 +110,6 @@ run_bootstrap() {
     --hoodie-conf "hoodie.datasource.hive_sync.table=${target_table}"
   )
 
-  #if version_lt "${HUDI_VERSION}" "${TARGET_HUDI_VERSION}"; then
-  #    args+=(
-  #      --hoodie-conf "hoodie.datasource.write.payload.class=org.apache.hudi.common.model.OverwriteWithLatestAvroPayload"
-  #    )
-  #fi
-
   if [[ "${partitioned}" == "true" ]]; then
     args+=(
       --hoodie-conf hoodie.datasource.write.partitionpath.field=city
@@ -145,128 +126,46 @@ run_bootstrap() {
   spark_submit_base "${args[@]}"
 }
 
-# ---------------------------------------------------------------------------
-# COPY_ON_WRITE (COW) Bootstrap
-# ---------------------------------------------------------------------------
-run_cow_bootstrap() {
-  echo ""
-  echo "########## COPY_ON_WRITE (COW) Bootstrap ##########"
 
-  # Non-Partitioned – FULL_RECORD
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_cow_bootstrap_fl/" \
-    "trips_hudi_cow_bootstrap_fl" \
-    "COPY_ON_WRITE" \
-    "${SOURCE_PARQUET}/" \
-    "FULL_RECORD" \
-    "false"
+run_bootstrap() {
+    SCENARIOS=()
+    export BASE_TABLE_NAME="${BASE_TABLE_NAME:-$YAML_BASE_TABLE_NAME}"
 
-  # Non-Partitioned – METADATA_ONLY
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_cow_bootstrap_mo/" \
-    "trips_hudi_cow_bootstrap_mo" \
-    "COPY_ON_WRITE" \
-    "${SOURCE_PARQUET}/" \
-    "METADATA_ONLY" \
-    "false"
+    for table_type in "COW" "MOR"; do
+        for partitioned in "false" "true"; do
+            for bootstrap_mode in "FULL_RECORD" "METADATA_ONLY"; do
+                part_suffix=""
+                if [ "$partitioned" = "true" ]; then
+                    part_suffix="_partitioned"
+                fi
+                table_type_lower=$(echo "$table_type" | tr '[:upper:]' '[:lower:]')
+                bootstrap_mode_suffix="mo"
+                if [ "$partitioned" = "FULL_RECORD" ]; then
+                    bootstrap_mode_suffix="fr"
+                fi
+                table_name="${BASE_TABLE_NAME}_${table_type_lower}_bootstrap_${part_suffix}_${bootstrap_mode_suffix}"
+                SCENARIOS+=("${table_name}|${table_type}|${partitioned}|${bootstrap_mode}")
+            done
+        done
+    done
 
-  # Partitioned – FULL_RECORD
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_cow_bootstrap_partitioned_fl/" \
-    "trips_hudi_cow_bootstrap_partitioned_fl" \
-    "COPY_ON_WRITE" \
-    "${SOURCE_PARTITION_PARQUET}/" \
-    "FULL_RECORD" \
-    "true"
-
-  # Partitioned – METADATA_ONLY
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_cow_bootstrap_partitioned_mo/" \
-    "trips_hudi_cow_bootstrap_partitioned_mo" \
-    "COPY_ON_WRITE" \
-    "${SOURCE_PARTITION_PARQUET}/" \
-    "METADATA_ONLY" \
-    "true"
+    for scenario in "${SCENARIOS[@]}"; do
+        IFS="|" read -r table_name table_type partitioned bootstrap_mode <<< "$scenario"
+        run_bootstrap \
+            "${HUDI_DATA_BASE_PATH}/${table_name}/" \
+            "${table_name}" \
+            "${table_type}" \
+            "${SOURCE_PARQUET_PATH}/" \
+            "${bootstrap_mode}" \
+            "${partitioned}"
+    done
 }
 
-# ---------------------------------------------------------------------------
-# MERGE_ON_READ (MOR) Bootstrap
-# ---------------------------------------------------------------------------
-run_mor_bootstrap() {
-  echo ""
-  echo "########## MERGE_ON_READ (MOR) Bootstrap ##########"
 
-  # Non-Partitioned – FULL_RECORD
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_mor_bootstrap_fl/" \
-    "trips_hudi_mor_bootstrap_fl" \
-    "MERGE_ON_READ" \
-    "${SOURCE_PARQUET}/" \
-    "FULL_RECORD" \
-    "false"
-
-  # Non-Partitioned – METADATA_ONLY
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_mor_bootstrap_mo/" \
-    "trips_hudi_mor_bootstrap_mo" \
-    "MERGE_ON_READ" \
-    "${SOURCE_PARQUET}/" \
-    "METADATA_ONLY" \
-    "false"
-
-  # Partitioned – FULL_RECORD
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_mor_bootstrap_partitioned_fl/" \
-    "trips_hudi_mor_bootstrap_partitioned_fl" \
-    "MERGE_ON_READ" \
-    "${SOURCE_PARTITION_PARQUET}/" \
-    "FULL_RECORD" \
-    "true"
-
-  # Partitioned – METADATA_ONLY
-  run_bootstrap \
-    "${HUDI_DATA_BASE}/trips_hudi_mor_bootstrap_partitioned_mo/" \
-    "trips_hudi_mor_bootstrap_partitioned_mo" \
-    "MERGE_ON_READ" \
-    "${SOURCE_PARTITION_PARQUET}/" \
-    "METADATA_ONLY" \
-    "true"
-}
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 main() {
-  local mode="${1:-all}"
-
-  echo "Hudi Bootstrap Automation"
-  echo "  WAREHOUSE_BASE=${WAREHOUSE_BASE}"
-  echo "  HIVE_METASTORE_URIS=${HIVE_METASTORE_URIS}"
-  echo "  HIVE_SYNC_DB=${HIVE_SYNC_DB}"
-  echo "  Mode: ${mode}"
-
-  case "${mode}" in
-    cow)
-      run_cow_bootstrap
-      ;;
-    mor)
-      run_mor_bootstrap
-      ;;
-    all)
-      run_cow_bootstrap
-      run_mor_bootstrap
-      ;;
-    *)
-      echo "Usage: $0 { all | cow | mor }" >&2
-      echo "  all  - run COW and MOR bootstrap (default)" >&2
-      echo "  cow  - run only COPY_ON_WRITE bootstrap" >&2
-      echo "  mor  - run only MERGE_ON_READ bootstrap" >&2
-      exit 1
-      ;;
-  esac
-
-  echo ""
-  echo "########## All bootstrap jobs completed successfully ##########"
+  echo "Running Hudi bootstrap automation."
+  bootstrap_hudi_tables
+  echo "Hudi bootstrap automation completed successfully."
 }
 
 main "$@"
