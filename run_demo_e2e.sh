@@ -42,6 +42,7 @@ if ! command -v spark-submit &> /dev/null; then
     exit 1
 fi
 
+# TODO: Add a flag to skip the installation of the required packages
 if ! pip list 2>/dev/null | grep -q -e trino -e presto-python-client; then
     echo "Required packages not found. Installing..."
     pip install -r requirements.txt

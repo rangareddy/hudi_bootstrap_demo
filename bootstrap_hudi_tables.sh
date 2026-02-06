@@ -86,8 +86,7 @@ run_bootstrap() {
   local partitioned="$6"  # "true" or "false"
 
   echo "=============================================="
-  echo "Bootstrap: ${target_table}"
-  echo "  Table Type: ${table_type} | Partitioned: ${partitioned} | Mode: ${bootstrap_mode}"
+  echo "Bootstrap: ${target_table} | Table Type: ${table_type} | Partitioned: ${partitioned} | Mode: ${bootstrap_mode}"
   echo "=============================================="
 
   local -a args=(
@@ -127,9 +126,9 @@ run_bootstrap() {
 }
 
 
-run_bootstrap() {
+bootstrap_hudi_tables() {
     SCENARIOS=()
-    export BASE_TABLE_NAME="${BASE_TABLE_NAME:-$YAML_BASE_TABLE_NAME}"
+    export base_table_name="${BASE_TABLE_NAME:-$YAML_BASE_TABLE_NAME}"
 
     for table_type in "COW" "MOR"; do
         for partitioned in "false" "true"; do
@@ -140,11 +139,15 @@ run_bootstrap() {
                 fi
                 table_type_lower=$(echo "$table_type" | tr '[:upper:]' '[:lower:]')
                 bootstrap_mode_suffix="mo"
-                if [ "$partitioned" = "FULL_RECORD" ]; then
+                if [ "$bootstrap_mode" = "FULL_RECORD" ]; then
                     bootstrap_mode_suffix="fr"
                 fi
-                table_name="${BASE_TABLE_NAME}_${table_type_lower}_bootstrap_${part_suffix}_${bootstrap_mode_suffix}"
-                SCENARIOS+=("${table_name}|${table_type}|${partitioned}|${bootstrap_mode}")
+                table_name="${base_table_name}_${table_type_lower}_bootstrap${part_suffix}_${bootstrap_mode_suffix}"
+                table_type_val="COPY_ON_WRITE"
+                if [ "$table_type" = "MOR" ]; then
+                    table_type_val="MERGE_ON_READ"
+                fi
+                SCENARIOS+=("${table_name}|${table_type_val}|${partitioned}|${bootstrap_mode}")
             done
         done
     done

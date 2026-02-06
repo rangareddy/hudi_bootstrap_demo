@@ -32,10 +32,12 @@ base_table_name = config['common']['base_table_name']
 for table_type in ["COW", "MOR"]:
     for partitioned in [False, True]:
         for bootstrap_mode in ["FULL_RECORD", "METADATA_ONLY"]:
-            table_name = f"{base_table_name}_{table_type}_bootstrap_{'partitioned' if partitioned else 'non_partitioned'}_{bootstrap_mode}"
+            table_type_lower = table_type.lower()
+            bootstrap_mode_suffix = "fr" if bootstrap_mode == "FULL_RECORD" else "mo"
+            part_suffix = "_partitioned" if partitioned else ""
+            table_name = f"{base_table_name}_{table_type_lower}_bootstrap{part_suffix}_{bootstrap_mode_suffix}"
             SCENARIOS.append((table_name, table_type, partitioned, bootstrap_mode))
-
-
+                
 def yes_no(value):
     return "✅ Yes" if value else "❌ No"
 
@@ -98,7 +100,7 @@ def validate_with_spark():
     )
 
     results = []
-    print("\n===== Spark Validation =====\n")
+    logger.info("\n===== Spark Validation =====\n")
     database = spark_config["db_name"]
     for table, table_type, partitioned, mode in SCENARIOS:
         metadata_visible = False
@@ -107,7 +109,7 @@ def validate_with_spark():
         try:
 
             full_table = f"{database}.{table}"
-            print(f"[Spark] Validating {full_table}")
+            logger.info(f"[Spark] Validating {full_table}")
             # Metadata visible: _hoodie_commit_time is not null
             try:
                 meta_df = spark.sql(
@@ -127,9 +129,9 @@ def validate_with_spark():
                 data_visible = False
 
             count = spark.sql(f"SELECT COUNT(*) FROM {full_table}").collect()[0][0]
-            print(f"  Rows                : {count}")
-            print(f"  Metadata Visible    : {'YES' if metadata_visible else 'NO'} (_hoodie_commit_time IS NOT NULL)")
-            print(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
+            logger.info(f"  Rows                : {count}")
+            logger.info(f"  Metadata Visible    : {'YES' if metadata_visible else 'NO'} (_hoodie_commit_time IS NOT NULL)")
+            logger.info(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
             agg_df = spark.sql(
                 f"SELECT city, SUM(fare) AS total_fare "
                 f"FROM {full_table} GROUP BY city"
@@ -137,7 +139,7 @@ def validate_with_spark():
             agg_df.show(truncate=False)
         except Exception as e:
             notes = str(e)
-            print(f"  ❌ FAILED: {e}")
+            logger.error(f"  ❌ FAILED: {e}")
 
         results.append({
             "engine": "Spark",
@@ -158,9 +160,9 @@ def validate_with_spark():
 # Trino Validation
 # -------------------------------------------------------------------
 def validate_with_trino():
-    print("\n===== Trino Validation =====\n")
+    logger.info("\n===== Trino Validation =====\n")
     trino_config = config["trino"]
-    print(f"Trino connection config: {trino_config}")
+    logger.info(f"Trino connection config: {trino_config}")
     results = []
     db_name = trino_config["schema"]
     catalog = trino_config["catalog"]
@@ -175,7 +177,7 @@ def validate_with_trino():
         cur = conn.cursor()
     except Exception as e:
         conn_err = str(e)
-        print(f"Trino connection failed: {e}")
+        logger.error(f"Trino connection failed: {e}")
         for table, table_type, partitioned, mode in SCENARIOS:
             full_table = f"{db_name}.{table}"
             results.append({
@@ -196,7 +198,7 @@ def validate_with_trino():
         notes = ""
         try:
             full_table = f"{db_name}.{table}"
-            print(f"[Trino] Validating {full_table}")
+            logger.info(f"[Trino] Validating {full_table}")
             # Metadata visible: _hoodie_commit_time is not null
             try:
                 cur.execute(
@@ -217,13 +219,13 @@ def validate_with_trino():
                 f"SELECT city, SUM(fare) FROM {full_table} GROUP BY city"
             )
             rows = cur.fetchall()
-            print(f"  Rows                : {count}")
-            print(f"  Metadata Visible    : {'YES' if metadata_visible else 'NO'} (_hoodie_commit_time IS NOT NULL)")
-            print(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
-            print(f"  Aggregates          : {rows}")
+            logger.info(f"  Rows                : {count}")
+            logger.info(f"  Metadata Visible    : {'YES' if metadata_visible else 'NO'} (_hoodie_commit_time IS NOT NULL)")
+            logger.info(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
+            logger.info(f"  Aggregates          : {rows}")
         except Exception as e:
             notes = str(e)
-            print(f"  ❌ FAILED: {e}")
+            logger.error(f"  ❌ FAILED: {e}")
 
         results.append({
             "engine": "Trino",
@@ -245,9 +247,9 @@ def validate_with_trino():
 # Presto Validation
 # -------------------------------------------------------------------
 def validate_with_presto():
-    print("\n===== Presto Validation =====\n")
+    logger.info("\n===== Presto Validation =====\n")
     presto_config = config["presto"]
-    print(f"Presto connection config: {presto_config}")
+    logger.info(f"Presto connection config: {presto_config}")
     results = []
     db_name = presto_config["schema"]
     catalog = presto_config["catalog"]
@@ -262,7 +264,7 @@ def validate_with_presto():
         cur = conn.cursor()
     except Exception as e:
         conn_err = str(e)
-        print(f"Presto connection failed: {e}")
+        logger.error(f"Presto connection failed: {e}")
         for table, table_type, partitioned, mode in SCENARIOS:
             full_table = f"{db_name}.{table}"
             results.append({
@@ -283,7 +285,7 @@ def validate_with_presto():
         notes = ""
         try:
             full_table = f"{db_name}.{table}"
-            print(f"[Presto] Validating {full_table}")
+            logger.info(f"[Presto] Validating {full_table}")
             # Metadata visible: _hoodie_commit_time is not null
             try:
                 cur.execute(
@@ -304,13 +306,13 @@ def validate_with_presto():
                 f"SELECT city, SUM(fare) FROM {full_table} GROUP BY city"
             )
             rows = cur.fetchall()
-            print(f"  Rows                : {count}")
-            print(f"  Metadata Visible    : {'YES' if metadata_visible else 'NO'} (_hoodie_commit_time IS NOT NULL)")
-            print(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
-            print(f"  Aggregates          : {rows}")
+            logger.info(f"  Rows                : {count}")
+            logger.info(f"  Metadata Visible    : {'YES' if metadata_visible else 'NO'} (_hoodie_commit_time IS NOT NULL)")
+            logger.info(f"  Data Visible        : {'YES' if data_visible else 'NO'} (ts IS NOT NULL)")
+            logger.info(f"  Aggregates          : {rows}")
         except Exception as e:
             notes = str(e)
-            print(f"  ❌ FAILED: {e}")
+            logger.error(f"  ❌ FAILED: {e}")
 
         results.append({
             "engine": "Presto",
@@ -334,6 +336,7 @@ if __name__ == "__main__":
         print("No engines selected. Please enable at least one engine in config.yaml.")
         sys.exit(1)
     hudi_version = os.environ.get("HUDI_VERSION", "")
+    logger.info(f"Validating with engine(s): {', '.join(engines)} and HUDI_VERSION: {hudi_version}")
     all_results = []
     if "spark" in engines:
         all_results.extend(validate_with_spark())
@@ -342,8 +345,7 @@ if __name__ == "__main__":
     if "presto" in engines:
         all_results.extend(validate_with_presto())
 
-    print(f"Validating with engine(s): {', '.join(engines)} and HUDI_VERSION: {hudi_version}")
-    print("\n" + "=" * 80)
-    print(f"VALIDATION SUMMARY: (HUDI_VERSION: {hudi_version})")
-    print("=" * 80)
+    logger.info("\n" + "=" * 80)
+    logger.info(f"VALIDATION SUMMARY: (HUDI_VERSION: {hudi_version})")
+    logger.info("=" * 80)
     print_results_table(all_results)
