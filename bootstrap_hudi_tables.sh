@@ -154,13 +154,22 @@ bootstrap_hudi_tables() {
 
     for scenario in "${SCENARIOS[@]}"; do
         IFS="|" read -r table_name table_type partitioned bootstrap_mode <<< "$scenario"
-        run_bootstrap \
-            "${HUDI_DATA_BASE_PATH}/${table_name}/" \
-            "${table_name}" \
-            "${table_type}" \
-            "${SOURCE_PARQUET_PATH}/" \
-            "${bootstrap_mode}" \
-            "${partitioned}"
+        source_parquet_path="${SOURCE_PARQUET_PATH}/"
+        if [ "$partitioned" = "true" ]; then
+            source_parquet_path="${SOURCE_PARTITION_PARQUET_PATH}/"
+        fi
+        target_base_path="${HUDI_DATA_BASE_PATH}/${table_name}/"
+        echo "=============================================="
+        echo "Running bootstrap for ${table_name}" 
+        echo "Table Type: ${table_type}"
+        echo "Partitioned: ${partitioned}"
+        echo "Bootstrap Mode: ${bootstrap_mode}"
+        echo "Target base path: ${target_base_path}"
+        echo "Source parquet path: ${source_parquet_path}"
+        echo "==============================================" 
+        run_bootstrap "${target_base_path}" "${table_name}" "${table_type}" "${source_parquet_path}" "${bootstrap_mode}" "${partitioned}"
+        echo "Bootstrap completed with status: $?"
+        echo "=============================================="
     done
 }
 
