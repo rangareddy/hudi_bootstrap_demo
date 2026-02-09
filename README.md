@@ -4,157 +4,87 @@ This demo shows how to **bootstrap** existing Parquet data into Apache Hudi tabl
 
 ## What this demo does
 
-1. **Generate source data** – Writes sample trip data as non-partitioned and city-partitioned Parquet under a warehouse path (e.g. S3).
-2. **Bootstrap** – Runs Hudi’s bootstrap to create 8 tables:
+1. **Generate source data** – Writes sample trip data as non-partitioned and city-partitioned Parquet under a warehouse path (e.g. S3). Skips generation if source data already exists.
+2. **Bootstrap** – Runs Hudi’s bootstrap to create 8 tables (4 COW + 4 MOR):
    - **COW** and **MOR**, each with:
      - Non-partitioned: FULL_RECORD and METADATA_ONLY
      - Partitioned by `city`: FULL_RECORD and METADATA_ONLY
-3. **Validate** – Queries each table from Spark, Trino, and Presto; checks that `_hoodie_commit_time` (metadata) and `ts` (data) are visible, and prints a summary table.
+   - Table names follow `{base_table_name}_{cow|mor}_bootstrap[_partitioned]_{fr|mo}` (e.g. `trips_hudi_cow_bootstrap_fr`, `trips_hudi_mor_bootstrap_partitioned_mo`).
+3. **Validate** – Queries each table from Spark, Trino, and/or Presto (as enabled in config); checks that `_hoodie_commit_time` (metadata) and `ts` (data) are visible; prints a summary table with a **Notes** column for any exceptions.
 
 ## Prerequisites
 
 - **Python 3** with `pip`
 - **Spark 3.x** (e.g. 3.5) with `spark-submit` on `PATH`
-- **Hudi JARs** at the paths used by `bootstrap_hudi_tables.sh` (default: `/opt/hudi/`), or set `HUDI_UTILITIES_JAR` and `HUDI_SPARK_JAR`
+- **Hudi JARs** – `run_demo_e2e.sh` builds JAR paths from `HUDI_JARS_PATH`, `HUDI_VERSION`, `SCALA_VERSION`, and Spark major version, and downloads the utilities and Spark bundle from Maven if they are not already present.
 - **Object storage** (e.g. S3) and a **Hive Metastore** for the bootstrap step
-- **Trino** and **Presto** (optional) for the validation step; if unavailable, validation will report connection failures for those engines
+- **Trino** and **Presto** (optional) for validation; disable in `config.yaml` if not available
 
 ## Configuration
 
-- **`config.yaml`** – Spark app name/master, Trino and Presto connection (host, port, catalog, schema, user). Adjust for your environment.
-- **`HUDI_VERSION`** – Set in `run_demo_e2e.sh` (default: `1.0.2`). Used by `bootstrap_hudi_tables.sh` for JAR paths and by the Python scripts for logging. Override with `export HUDI_VERSION=x.y.z` before running.
-- **Warehouse path** – Source and Hudi data paths are derived from `WAREHOUSE_BASE`. Default: `s3a://warehouse/`. Override with:
-  - `generate_source_parquet.py`: set env `SOURCE_BASE_PATH` (or rely on default in script).
-  - `bootstrap_hudi_tables.sh`: set env `WAREHOUSE_BASE` (e.g. `export WAREHOUSE_BASE=s3a://my-bucket/warehouse`).
+All main settings are in **`config.yaml`**:
+
+| Section   | Key                   | Description |
+| --------- | --------------------- | ----------- |
+| `common`  | `base_path`           | Warehouse base path (e.g. `s3a://warehouse/`) |
+| `common`  | `schema`              | Hive schema/database name (e.g. `bootstrap_db`) |
+| `common`  | `base_table_name`     | Base name for Hudi tables (e.g. `trips_hudi`) |
+| `common`  | `hive_metastore_uris` | Hive metastore URI for sync |
+| `common`  | `hudi_version`        | Hudi version (e.g. `1.0.2`) |
+| `common`  | `hudi_jars_path`      | Directory for Hudi JARs (e.g. `/opt/hudi`) |
+| `spark`   | `app_name`, `master`  | Spark application name and master URL |
+| `trino`   | `enabled`, `host`, `port`, `user`, `catalog`, `schema` | Trino connection and enable/disable |
+| `presto`  | `enabled`, `host`, `port`, `user`, `catalog`, `schema` | Presto connection and enable/disable |
+
+**`run_demo_e2e.sh`** reads `config.yaml` and exports these as environment variables for the bootstrap script; you can still override them with `export VAR=value` before running.
 
 ## Quick start (end-to-end)
 
 From the `hudi_bootstrap_demo` directory:
 
 ```bash
-# Install Python dependencies (PySpark, Trino/Presto clients, PyYAML)
-pip install -r requirements.txt
-
-# Run all steps: generate source data → bootstrap all 8 tables → validate
 bash run_demo_e2e.sh
 ```
 
-This will:
+The script:
 
-1. Run `spark-submit generate_source_parquet.py` (writes Parquet under `SOURCE_BASE_PATH`).
-2. Run `bash bootstrap_hudi_tables.sh all` (creates Hudi tables and syncs to Hive).
-3. Run `spark-submit validate_hudi_tables.py` (Spark + Trino + Presto validation and summary table).
+1. **Validates** – Checks that `spark-submit` is on `PATH` and that Python can `import trino, prestodb` (runs `pip install -r requirements.txt` if not).
+2. **Loads config** – Reads `config.yaml` and exports `HIVE_METASTORE_URIS`, `HIVE_SYNC_DB`, `SPARK_MASTER`, `WAREHOUSE_BASE_PATH`, `BASE_TABLE_NAME`, `HUDI_VERSION`, `HUDI_JARS_PATH` for child scripts. Spark/Scala versions are taken from `spark-submit --version` unless overridden by env.
+3. **Downloads Hudi JARs** – If the utilities and Spark bundle JARs are not present under `HUDI_JARS_PATH`, downloads them from Maven.
+4. **Step 1** – `spark-submit generate_source_parquet.py` → writes Parquet under `base_path/source_data/` (skips if already present). Output is teed to the run log.
+5. **Step 2** – `bash bootstrap_hudi_tables.sh` → creates all 8 Hudi tables and syncs to Hive. Output teed to the run log.
+6. **Step 3** – `spark-submit --jars ${HUDI_SPARK_JAR} validate_hudi_tables.py` → validates using engines enabled in config. Output teed to the run log.
 
-## Running steps individually
+**Log file** – All step output is teed to a single timestamped file: **`logs/hudi_bootstrap_e2e_YYYYMMDD_HHMMSS.log`** (e.g. `logs/hudi_bootstrap_e2e_20250203_143022.log`). The script prints this path at the end.
 
-### 1. Generate source Parquet data
+## Log files
 
-```bash
-spark-submit generate_source_parquet.py
-```
+When you run **`run_demo_e2e.sh`**, all step output is teed to one timestamped log file:
 
-- Reads `config.yaml` for Spark settings.
-- Writes non-partitioned Parquet to `.../source_data/source_parquet/` and partitioned (by `city`) to `.../source_data/source_partition_parquet/`.
-- Validates row count before and after write. Override base path with `SOURCE_BASE_PATH` if needed.
-
-### 2. Run Hudi bootstrap
-
-```bash
-./bootstrap_hudi_tables.sh [all|cow|mor]
-```
-
-- **`all`** (default) – Bootstrap all 8 tables (4 COW + 4 MOR).
-- **`cow`** – Only the 4 COPY_ON_WRITE tables.
-- **`mor`** – Only the 4 MERGE_ON_READ tables.
-
-Optional environment variables (see `bootstrap_hudi_tables.sh` header):
-
-| Variable | Default | Description |
-| -------- | ------- | ----------- |
-| `HUDI_VERSION` | `1.0.2` (set in `run_demo_e2e.sh`) | Hudi version used for JAR paths; override to use a different version |
-| `WAREHOUSE_BASE` | `s3a://warehouse` | Base path for source and Hudi data |
-| `HIVE_METASTORE_URIS` | `thrift://hive-metastore:9083` | Hive metastore for sync |
-| `HIVE_SYNC_DB` | `bootstrap_db` | Hive database for synced tables |
-| `HUDI_UTILITIES_JAR` | `…/hudi-utilities-slim-bundle_2.12-${HUDI_VERSION}.jar` | Hudi utilities JAR |
-| `HUDI_SPARK_JAR` | `…/hudi-spark3.5-bundle_2.12-${HUDI_VERSION}.jar` | Hudi Spark bundle JAR |
-| `SPARK_MASTER` | `local` | Spark master URL |
-
-### 3. Validate Hudi reads
-
-```bash
-# Validate with all engines (default: Spark, Trino, Presto)
-spark-submit validate_hudi_tables.py
-
-# Validate with a single engine
-spark-submit validate_hudi_tables.py --engines spark
-spark-submit validate_hudi_tables.py -e trino
-spark-submit validate_hudi_tables.py -e presto
-
-# Validate with a combination (comma-separated or repeated -e)
-spark-submit validate_hudi_tables.py --engines spark,trino
-spark-submit validate_hudi_tables.py -e spark -e presto
-```
-
-- **`--engines` / `-e`** – One or more of `spark`, `trino`, `presto`. Default: all three.
-- Reads `config.yaml` for Spark, Trino, and Presto.
-- For each of the 8 tables, runs queries from the selected engine(s).
-- **Metadata visible** = at least one row with `_hoodie_commit_time IS NOT NULL`.
-- **Data visible** = at least one row with `ts IS NOT NULL`.
-- Prints a markdown summary table: Engine × Table Type × Partitioned × Bootstrap Mode × Hoodie Metadata Visible × Hoodie Data Visible.
-
-## Bootstrap Validation Matrix
-
-The following matrix shows all tested combinations and their outcomes:
-
-| Engine | Table Type | Table Partitioned | Bootstrap Mode | Hoodie Metadata Visible | Hoodie Data Visible |
-| ------ | ---------- | ----------------- | -------------- | ----------------------- | ------------------- |
-| Spark  | COW        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Spark  | COW        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
-| Spark  | COW        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Spark  | COW        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
-| Spark  | MOR        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Spark  | MOR        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
-| Spark  | MOR        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Spark  | MOR        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ✅ Yes               |
-| Trino  | COW        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Trino  | COW        | ❌ No              | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
-| Trino  | COW        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Trino  | COW        | ✅ Yes             | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
-| Trino  | MOR        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Trino  | MOR        | ❌ No              | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
-| Trino  | MOR        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Trino  | MOR        | ✅ Yes             | METADATA_ONLY  | ❌ No                    | ✅ Yes               |
-| Presto | COW        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Presto | COW        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
-| Presto | COW        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Presto | COW        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
-| Presto | MOR        | ❌ No              | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Presto | MOR        | ❌ No              | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
-| Presto | MOR        | ✅ Yes             | FULL_RECORD    | ✅ Yes                   | ✅ Yes               |
-| Presto | MOR        | ✅ Yes             | METADATA_ONLY  | ✅ Yes                   | ❌ No                |
+| Log path | Description |
+| -------- | ----------- |
+| `logs/hudi_bootstrap_e2e_YYYYMMDD_HHMMSS.log` | Single log file for the run (e.g. `logs/hudi_bootstrap_e2e_20250203_143022.log`). Each step’s stdout/stderr is teed to this file. |
 
 ## Files in this directory
 
 | File | Purpose |
 | ---- | ------- |
-| `config.yaml` | Spark, Trino, and Presto settings |
-| `generate_source_parquet.py` | Generate source Parquet data and validate by row count |
-| `bootstrap_hudi_tables.sh` | Run Hudi bootstrap for COW/MOR tables (all or subset) |
-| `run_demo_e2e.sh` | Run full demo: generate → bootstrap → validate |
-| `validate_hudi_tables.py` | Validate Hudi table reads (Spark, Trino, Presto) and print summary table |
-| `requirements.txt` | Python dependencies |
+| `config.yaml` | Single source for common, Spark, Trino, and Presto settings (paths, Hive, table names, engine enable flags) |
+| `yaml_util.py` | Loads and returns `config.yaml` as a dict; used by Python scripts |
+| `generate_source_parquet.py` | Generate source Parquet (skips if paths exist); uses `config.yaml` |
+| `bootstrap_hudi_tables.sh` | Run Hudi bootstrap for all 8 COW/MOR tables; reads config via Python and env |
+| `run_demo_e2e.sh` | Run full demo: validate deps, load config, download Hudi JARs if needed, then generate → bootstrap → validate; tees all output to `logs/hudi_bootstrap_e2e_YYYYMMDD_HHMMSS.log` |
+| `validate_hudi_tables.py` | Validate Hudi tables with Spark/Trino/Presto per config; print summary with Table and Notes |
+| `requirements.txt` | Python dependencies (trino, presto-python-client, pyyaml) |
 
 ## Troubleshooting
 
-- **Spark / Hudi not found** – Ensure `spark-submit` is on `PATH` and Hudi JAR paths in `bootstrap_hudi_tables.sh` (or `HUDI_UTILITIES_JAR` / `HUDI_SPARK_JAR`) are correct.
-- **S3 / path errors** – Set `WAREHOUSE_BASE` (and `SOURCE_BASE_PATH` for generation) to a path your Spark and cluster can read/write (e.g. `s3a://bucket/prefix/`).
-- **Hive sync failures** – Ensure Hive Metastore is reachable at `HIVE_METASTORE_URIS` and the database `HIVE_SYNC_DB` exists (or can be created).
-- **Trino / Presto validation fails** – Ensure Trino and Presto are running and `config.yaml` host/port/catalog/schema match your setup. Validation will still run for Spark and report connection errors for the other engines.
+- **Spark / Hudi not found** – Ensure `spark-submit` is on `PATH`. If JARs are not present, the e2e script will try to download them to `hudi_jars_path`; otherwise set `HUDI_UTILITIES_JAR` and `HUDI_SPARK_JAR`.
+- **S3 / path errors** – Set `base_path` in `config.yaml` (or override `WAREHOUSE_BASE_PATH`) to a path your Spark and cluster can read/write.
+- **Hive sync failures** – Ensure Hive Metastore is reachable at `hive_metastore_uris` in config and the database in `schema` exists (or can be created).
+- **Trino / Presto validation** – Set `trino.enabled` / `presto.enabled` to `false` in `config.yaml` if those engines are not available; validation will run only for enabled engines. Connection or query errors appear in the **Notes** column of the summary table.
 
 ## References
 
 1. [Hudi Bootstrap Procedures](https://hudi.apache.org/docs/procedures#bootstrap)
 2. [Hudi Migration Guide](https://hudi.apache.org/docs/migration_guide)
-
-
-

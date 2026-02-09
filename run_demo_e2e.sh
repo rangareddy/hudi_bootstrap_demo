@@ -14,9 +14,26 @@ set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
+validate_spark_submit() {
+    if ! command -v spark-submit &> /dev/null; then
+        echo "spark-submit could not be found. Please install Spark and add it to your PATH."
+        exit 1
+    fi
+}
+
+validate_packages() {
+    if ! python -c "import trino, prestodb" &>/dev/null; then
+        echo "Required packages not found. Installing..."
+        pip install -r requirements.txt
+    fi
+}
+
+validate_spark_submit
+validate_packages
+
 export CONFIG_FILE="${SCRIPT_DIR}/config.yaml"
 
-VARS_EVAL=$(python3 -c "
+VARS_EVAL=$(python -c "
 import yaml
 try:
     with open('$CONFIG_FILE', 'r') as f:
@@ -37,25 +54,14 @@ except Exception as e:
 
 eval "$VARS_EVAL"
 
-if ! command -v spark-submit &> /dev/null; then
-    echo "spark-submit could not be found. Please install Spark and add it to your PATH."
-    exit 1
-fi
-
-# TODO: Add a flag to skip the installation of the required packages
-if ! pip list 2>/dev/null | grep -q -e trino -e presto-python-client; then
-    echo "Required packages not found. Installing..."
-    pip install -r requirements.txt
-fi
-
 export SPARK_VERSION=${SPARK_VERSION:-$(spark-submit --version 2>&1 | awk '/version/ {print $NF; exit}')}   
 export SPARK_MAJOR_VERSION=${SPARK_MAJOR_VERSION:-$(echo "${SPARK_VERSION}" | cut -d. -f1,2)}
 export SCALA_VERSION=${SCALA_VERSION:-$(spark-submit --version 2>&1 | grep 'Scala version' | awk '{print $4}' | cut -d. -f1,2)}
 
 export HUDI_VERSION=${HUDI_VERSION:-1.0.2}
-export HUDI_JARS_PATH="${HUDI_JARS_PATH:-/opt/hudi}"
-export HUDI_UTILITIES_JAR="${HUDI_UTILITIES_JAR:-${HUDI_JARS_PATH}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
-export HUDI_SPARK_JAR="${HUDI_SPARK_JAR:-${HUDI_JARS_PATH}/hudi-spark${SPARK_MAJOR_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar}"
+export HUDI_JARS_PATH=${HUDI_JARS_PATH:-/opt/hudi}
+export HUDI_UTILITIES_JAR=${HUDI_JARS_PATH}/hudi-utilities-slim-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar
+export HUDI_SPARK_JAR=${HUDI_JARS_PATH}/hudi-spark${SPARK_MAJOR_VERSION}-bundle_${SCALA_VERSION}-${HUDI_VERSION}.jar
 
 download_hudi_jars() {
     MVN_HUDI_URL=https://repo1.maven.org/maven2/org/apache/hudi
@@ -75,24 +81,21 @@ download_hudi_jars() {
 
 download_hudi_jars
 
-LOG_DIR="${SCRIPT_DIR}/logs/${HUDI_VERSION}"
-LOG_GENERATE="${LOG_DIR}/generate_source_parquet.log"
-LOG_BOOTSTRAP="${LOG_DIR}/bootstrap_hudi_tables.log"
-LOG_VALIDATE="${LOG_DIR}/validate_hudi_tables.log"
+LOG_DIR=${SCRIPT_DIR}/logs/
+LOG_DIR_PATH=${LOG_DIR}/hudi_bootstrap_e2e_$(date +%Y%m%d_%H%M%S).log
 mkdir -p ${LOG_DIR}
 
-echo "=============================================="
+echo "===================================================================="
 echo "Hudi bootstrap E2E started."
 echo "SPARK_VERSION: ${SPARK_VERSION} and SCALA_VERSION: ${SCALA_VERSION} and HUDI_VERSION: ${HUDI_VERSION}"
-echo "=============================================="
+echo "===================================================================="
 
 # ---------------------------------------------------------------------------
 # 1. Generate source data
 # ---------------------------------------------------------------------------
 echo ""
 echo "########## Step 1: Generate source Parquet data ##########"
-echo "Step 1 log: ${LOG_GENERATE}"
-spark-submit generate_source_parquet.py 2>&1 | tee "${LOG_GENERATE}"
+spark-submit generate_source_parquet.py 2>&1 | tee "${LOG_DIR_PATH}"
 echo "Step 1 done with status: $?"
 
 # ---------------------------------------------------------------------------
@@ -101,8 +104,7 @@ echo "Step 1 done with status: $?"
 
 echo ""
 echo "########## Step 2: Run Hudi bootstrap ##########"
-echo "Step 2 log: ${LOG_BOOTSTRAP}"
-bash bootstrap_hudi_tables.sh 2>&1 | tee "${LOG_BOOTSTRAP}"
+bash bootstrap_hudi_tables.sh 2>&1 | tee "${LOG_DIR_PATH}"
 echo "Step 2 done with status: $?"
 
 # ---------------------------------------------------------------------------
@@ -110,13 +112,11 @@ echo "Step 2 done with status: $?"
 # ---------------------------------------------------------------------------
 echo ""
 echo "########## Step 3: Validate Hudi reads ##########"
-echo "Step 3 log: ${LOG_VALIDATE}"
-
-spark-submit --jars ${HUDI_SPARK_JAR} validate_hudi_tables.py 2>&1 | tee "${LOG_VALIDATE}"
+spark-submit --jars ${HUDI_SPARK_JAR} validate_hudi_tables.py 2>&1 | tee "${LOG_DIR_PATH}"
 echo "Step 3 done with status: $?"
 
 echo ""
-echo "=============================================="
-echo "E2E completed successfully."
-echo "Step logs: ${LOG_GENERATE} | ${LOG_BOOTSTRAP} | ${LOG_VALIDATE}"
-echo "=============================================="
+echo "===================================================================="
+echo "Hudi bootstrap E2E completed successfully."
+echo "Step logs: ${LOG_DIR_PATH}"
+echo "===================================================================="
